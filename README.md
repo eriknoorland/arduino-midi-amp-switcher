@@ -1,0 +1,1 @@
+This Arduino software is specifically written for my custom built midi amp switcher which is designed to switch a Mesa Boogie Dual Rectifier using the Voodoo Lab Ground Control Pro using program changes instead of the instant access method using midi cc messages.
