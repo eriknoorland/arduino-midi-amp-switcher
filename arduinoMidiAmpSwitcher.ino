@@ -1,38 +1,92 @@
-#include <MIDI.h>
+#include "Wire.h"
+#include "MIDI.h"
+#include "EEPROM.h"
+#include "Adafruit_LiquidCrystal.h"
 
 // software version number (major.minor.hotfix)
-const String VERSION_NUMBER = "0.2.0";
+const String VERSION_NUMBER = "0.4.0";
 
 // default midi channel is used when the user
 // has not yet stored a midi channel
 const byte DEFAULT_MIDI_CHANNEL = 1;
 
-// The most left digit stands for the first output
-// and the most right digit for the last output
-const byte numProgramPresets = 17;
-const String programPresets[numProgramPresets] = {
-  "----", "0000", "0001", "0010", "0011", "0100", "0101", "0110", "0111",
+// input pins (rotary / buttons)
+const byte ROTARY_PIN_A = 2;
+const byte ROTARY_PIN_B = 3;
+const byte SELECT_BUTTON_PIN = 4;
+const byte STORE_BUTTON_PIN = 11;
+const byte EXIT_BUTTON_PIN = 12;
+
+// output pins
+const byte ACTIVITY_PIN = 13;
+const byte OUTPUT_PIN_1 = 9;
+const byte OUTPUT_PIN_2 = 10;
+const byte OUTPUT_PIN_3 = 11;
+const byte OUTPUT_PIN_4 = 12;
+
+// program states
+const byte STATE_INIT = 0;
+const byte STATE_NAV = 1;
+const byte STATE_SELECT_MIDI_CHANNEL = 2;
+const byte STATE_SELECT_MIDI_PROGRAM_PRESET_NUMBER = 3;
+const byte STATE_SELECT_MIDI_PROGRAM_NUMBER = 4;
+const byte STATE_SELECT_MIDI_PROGRAM_PRESET = 5;
+const byte STATE_SELECT_MIDI_CONTROL_CHANGE_OUTPUT = 6;
+const byte STATE_SELECT_MIDI_CONTROL_CHANGE_NUMBER = 7;
+const byte STATE_MEMORY_RESET = 8;
+const byte STATE_SOFTWARE_VERSION = 9;
+
+// rotary value maximums
+const byte NUM_NAVIGATION_ITEMS = 5;
+const byte NUM_DEVICE_OUTPUTS = 4;
+const byte NUM_MIDI_CHANNELS = 128;
+const byte NUM_PROGRAM_NUMBERS = 128;
+const byte NUM_CC_NUMBERS = 128;
+const byte NUM_PROGRAM_PRESETS = 16;
+
+// a translation table from nav items to program states
+const byte NAVIGATION_ITEMS_TO_STATE[NUM_NAVIGATION_ITEMS] = {
+  STATE_SELECT_MIDI_CHANNEL,
+  STATE_SELECT_MIDI_PROGRAM_PRESET_NUMBER,
+  STATE_SELECT_MIDI_CONTROL_CHANGE_OUTPUT,
+  STATE_MEMORY_RESET,
+  STATE_SOFTWARE_VERSION
+};
+
+// navigation items
+const String NAVIGATION_ITEMS[NUM_NAVIGATION_ITEMS] = {
+  "CHANNEL",
+  "PROGRAM",
+  "CC",
+  "RESET MEMORY",
+  "VERSION"
+};
+
+// program presets byte values
+const byte PROGRAM_PRESETS[NUM_PROGRAM_PRESETS] = {
+  B00000000, B00000001, B00000010, B00000011, B00000100, B00000101, B00000110, B00000111,
+  B00001000, B00001001, B00001010, B00001011, B00001100, B00001101, B00001110, B00001111
+};
+
+// program presets string values (for display purposes)
+const String PROGRAM_PRESET_STRINGS[NUM_PROGRAM_PRESETS] = {
+  "0000", "0001", "0010", "0011", "0100", "0101", "0110", "0111",
   "1000", "1001", "1010", "1011", "1100", "1101", "1110", "1111"
 };
 
-// output pins
-const byte activityPin = 13;
-const byte outputPin1 = 9;
-const byte outputPin2 = 10;
-const byte outputPin3 = 11;
-const byte outputPin4 = 12;
+// device outputs
+const byte DEVICE_OUTPUTS[NUM_DEVICE_OUTPUTS] = {1, 2, 3, 4};
 
-const byte numOutputPins = 5;
-const byte outputPins[numOutputPins] = {
-  activityPin, outputPin1, outputPin2, outputPin3, outputPin4
-};
+// storage locations
+const int MIDI_CHANNEL_STORAGE_LOCATION = 37;
+const int MIDI_CC_STORAGE_LOCATIONS[NUM_DEVICE_OUTPUTS] = {33, 34, 35, 36};
 
-// input pins
-const byte rotaryPinA = 2;
-const byte rotaryPinB = 3;
-const byte selectButtonPin = 4;
-const byte storeButtonPin = 5;
-const byte exitButtonPin = 6;
+// rotary variables
+volatile byte rotaryPinAFlag = 0;
+volatile byte rotaryPinBFlag = 0;
+volatile int newRotaryValue = 0;
+volatile int prevRotaryValue = 0;
+volatile byte pinReading = 0;
 
 boolean selectButtonState = LOW;
 boolean selectButtonLastState = LOW;
@@ -41,91 +95,51 @@ boolean storeButtonLastState = LOW;
 boolean exitButtonState = LOW;
 boolean exitButtonLastState = LOW;
 
-const byte numInputPins = 5;
-const byte inputPins[numInputPins] = {
-  rotaryPinA,
-  rotaryPinB,
-  selectButtonPin,
-  storeButtonPin,
-  exitButtonPin
-};
+int rotaryValue;
+byte minRotaryValue;
+byte maxRotaryValue;
+boolean loopRotaryValue = true;
 
-const int rotaryBump[] = {0, -1, 0, 1};
-byte rotaryValue = 0;
-byte minRotaryValue = 0;
-byte maxRotaryValue = 10; // number of array length of the current scrolling list
-boolean loopRotaryValue = true; // get to the beginning of the array when at the end and vice versa
+byte state = -1;
 
-byte midiChannel = DEFAULT_MIDI_CHANNEL;
+byte tempMidiChannel;
+byte tempProgramPresetNumber;
+byte tempProgramNumber;
+byte tempProgramPreset;
+byte tempOutputNumber;
+byte tempCCNumber;
+
+Adafruit_LiquidCrystal lcd(0);
 
 MIDI_CREATE_DEFAULT_INSTANCE();
 
+/////////////////////////
+////  RESET HELPERS  ////
+/////////////////////////
+
 /**
- * Program setup
+ * Resets the rotary value
+ * @param {byte} value [optional] defaults to 0
  */
-void setup() {
-  // setup output pin modes
-  for(int i = 0; i < numOutputPins; i++) {
-    pinMode(outputPins[i], OUTPUT);
-  }
-
-  // setup input pin modes
-  // setup inputs using the internal pullup resistors
-  for(int j = 0; j < numInputPins; j++) {
-    pinMode(inputPins[j], INPUT);
-    digitalWrite(inputPins[j], HIGH);
-  }
-
-  // setup button states
-  selectButtonState = digitalRead(selectButtonPin);
-  selectButtonLastState = selectButtonState;
-  storeButtonState = digitalRead(storeButtonPin);
-  storeButtonLastState = storeButtonState;
-  exitButtonState = digitalRead(exitButtonPin);
-  exitButtonLastState = exitButtonState;
-
-  // get the user stored channel or use the default
-  // midiChannel = <EEPROM data>;
-
-  // setup midi listeners
-  MIDI.begin(midiChannel);
-  MIDI.setHandleControlChange(onControlChange);
-  MIDI.setHandleProgramChange(onProgramChange);
-
-  // setup rotary listener
-  attachInterrupt(0, onRotaryUpdate, RISING);
-
-  Serial.begin(9600);
+void resetRotaryValue(byte value = 0) {
+  newRotaryValue = value;
+  prevRotaryValue = value;
+  rotaryValue = value;
+  rotaryPinAFlag = 0;
+  rotaryPinBFlag = 0;
+  pinReading = 0;
 }
 
 /**
- * Program loop
+ * Resets the temporary values
  */
-void loop() {
-  MIDI.read();
-
-  selectButtonState = digitalRead(selectButtonPin);
-  storeButtonState = digitalRead(storeButtonPin);
-  exitButtonState = digitalRead(exitButtonPin);
-
-  if(selectButtonState == HIGH && selectButtonLastState == LOW) {
-   onSelectButtonPress();
-  }
-  delay(1);
-
-  if(storeButtonState == LOW && storeButtonLastState == HIGH) {
-   onStoreButtonPress();
-  }
-  delay(1);
-
-  if(exitButtonState == LOW && exitButtonLastState == HIGH) {
-   onExitButtonPress();
-  }
-  delay(1);
-
-  selectButtonLastState = selectButtonState;
-  storeButtonLastState = storeButtonState;
-  exitButtonLastState = exitButtonState;
+void resetTempValues() {
+  tempMidiChannel = 0;
+  tempProgramPresetNumber = 0;
+  tempProgramNumber = 0;
+  tempProgramPreset = PROGRAM_PRESETS[0];
+  tempOutputNumber = 0;
+  tempCCNumber = 0;
 }
 
 /**
@@ -133,14 +147,312 @@ void loop() {
  */
 void onMidiActivity() {
   // FIX ME: make this function non-blocking
-  digitalWrite(activityPin, HIGH);
+  digitalWrite(ACTIVITY_PIN, HIGH);
   delay(50);
-  digitalWrite(activityPin, LOW);
+  digitalWrite(ACTIVITY_PIN, LOW);
   delay(50);
-  digitalWrite(activityPin, HIGH);
+  digitalWrite(ACTIVITY_PIN, HIGH);
   delay(50);
-  digitalWrite(activityPin, LOW);
+  digitalWrite(ACTIVITY_PIN, LOW);
 }
+
+//////////////////////////
+////  EEPROM HELPERS  ////
+//////////////////////////
+
+/**
+ * Returns the stored value at the given location or 0
+ * @param {byte} location
+ * @return {byte}
+ */
+byte getValueFromStorage(int location) {
+  byte value = EEPROM.read(location);
+
+  if(value == 255) {
+    value = 0;
+  }
+
+  return value;
+}
+
+/**
+ * Stores the value in the given location when it's an altered value
+ * @param {byte} location
+ * @param {byte} value
+ */
+void storeValue(byte location, byte value) {
+  byte currentValue = EEPROM.read(location);
+
+  if(currentValue != value) {
+    // EEPROM.write(location, value);
+  }
+}
+
+///////////////////////////
+////  DISPLAY HELPERS  ////
+///////////////////////////
+
+/**
+ * Updates the given line on the LCD display
+ * @param {string} body [optional]
+ * @param {byte} lineNumber [optional]
+ */
+void updateDisplayLine(String body = "", byte lineNumber = 0) {
+  if(body != "") {
+    lcd.setCursor(0, lineNumber);
+    lcd.print("                ");
+    lcd.setCursor(0, lineNumber);
+    lcd.print(body);
+  }
+}
+
+/**
+ * Updates the LCD display with the given copy
+ * @param {String} line1 [optional]
+ * @param {String} line2 [optional]
+ * @param {Boolean} clear [optional]
+ */
+void updateDisplay(String line1 = "", String line2 = "", boolean clear = false) {
+  if(clear) {
+    lcd.clear();
+  }
+
+  updateDisplayLine(line1, 0);
+  updateDisplayLine(line2, 1);
+}
+
+/**
+ * Updates the LCD display based on the rotary values
+ * when settings the various parameters
+ * @param {String} info
+ * @param {int} numPreset
+ * @param {int} numProgram
+ * @param {String} preset
+ */
+void updateMidiProgramDisplay(String info, int numPreset, int numProgram, byte preset) {
+  String line1 = NAVIGATION_ITEMS[1] + " " + info;
+  String line2 = "P" + String(numPreset) + " / " + String(numProgram) + " / " + PROGRAM_PRESET_STRINGS[preset];
+
+  updateDisplay(line1, line2, true);
+}
+
+/**
+ * Updates the LCD display based on the rotary values
+ * when settings the various parameters
+ * @param {String} info
+ * @param {int} numOutput
+ * @param {int} numCC
+ */
+void updateMidiCCDisplay(String info, int numOutput, int numCC) {
+  String line1 = NAVIGATION_ITEMS[2] + " " + info;
+  String line2 = String(DEVICE_OUTPUTS[numOutput]) + " / " + String(numCC);
+
+  updateDisplay(line1, line2, true);
+}
+
+//////////////////////////
+////  INPUT HANDLERS  ////
+//////////////////////////
+
+/**
+ * Handler for when switching to the init state
+ */
+void onInitState() {
+  updateDisplay("CUSTOM MIDI", "AMP SWITCHER", true);
+}
+
+/**
+ * Handler for when switching to the navigation state
+ */
+void onNavigationState() {
+  onNavigationChange(0);
+}
+
+/**
+ * Updates the LCD display based on the rotary value
+ * when scrolling through the navigation menu
+ */
+void onNavigationChange(byte index) {
+  int secondNavItem = index + 1;
+
+  String line1 = NAVIGATION_ITEMS[index] + " <";
+  String line2;
+
+  if(secondNavItem < NUM_NAVIGATION_ITEMS) {
+    line2 = NAVIGATION_ITEMS[secondNavItem];
+  }
+  
+  updateDisplay(line1, line2, true);
+}
+
+/**
+ * Handler for when switching to the memory reset state
+ */
+void onMemoryResetState() {
+  updateDisplay(NAVIGATION_ITEMS[3], "store or exit", true);
+}
+
+/**
+ * Resets the memory
+ */
+void onStoreMemoryReset() {
+  for(int i = 0; i < EEPROM.length(); i++) {
+    storeValue(i, 0);
+  }
+}
+
+/**
+ * Handler for when switching to the software version state
+ */
+void onSoftwareVersionState() {
+  updateDisplay(NAVIGATION_ITEMS[4], VERSION_NUMBER, true);
+}
+
+/////////////////////////////////
+////  MIDI CHANNEL HANDLERS  ////
+/////////////////////////////////
+
+/**
+ * Handler for when switching to the midi channel state
+ */
+void onMidiChannelState() {
+  byte channel = getValueFromStorage(MIDI_CHANNEL_STORAGE_LOCATION);
+
+  resetRotaryValue(channel);
+  onMidiChannelChange(channel);
+}
+
+/**
+ * Handler for when the midi channel value changes
+ * @param {byte} value
+ */
+void onMidiChannelChange(byte value) {
+  tempMidiChannel = value;
+
+  updateDisplay(NAVIGATION_ITEMS[0], String(tempMidiChannel));
+}
+
+/**
+ * Stores the midi channel
+ */
+void onStoreMidiChannel() {
+  storeValue(MIDI_CHANNEL_STORAGE_LOCATION, tempMidiChannel);
+}
+
+/////////////////////////////////
+////  MIDI PROGRAM HANDLERS  ////
+/////////////////////////////////
+
+/**
+ * Handler for when switching to the midi program preset number state
+ */
+void onMidiProgramPresetNumberState() {
+  resetRotaryValue(0);
+  onMidiProgramPresetNumberChange(0);
+}
+
+/**
+ * Handler for when the midi program preset number value changes
+ * @param {byte} value
+ */
+void onMidiProgramPresetNumberChange(byte value) {
+  tempProgramPresetNumber = value + 1;
+  tempProgramNumber = getValueFromStorage(tempProgramPresetNumber);
+  tempProgramPreset = getValueFromStorage(NUM_PROGRAM_PRESETS + tempProgramPresetNumber);
+  updateMidiProgramDisplay("id", tempProgramPresetNumber, tempProgramNumber, tempProgramPreset);
+}
+
+/**
+ * Handler for when switching to the midi program number state
+ */
+void onMidiProgramNumberState() {
+  resetRotaryValue(tempProgramNumber);
+  onMidiProgramNumberChange(tempProgramNumber);
+}
+
+/**
+ * Handler for when the midi program number value changes
+ * @param {byte} value
+ */
+void onMidiProgramNumberChange(byte value) {
+  tempProgramNumber = value;
+  updateMidiProgramDisplay("program", tempProgramPresetNumber, tempProgramNumber, tempProgramPreset);
+}
+
+/**
+ * Handler for when switching to the midi program preset state
+ */
+void onMidiProgramPresetState() {
+  resetRotaryValue(tempProgramPreset);
+  onMidiProgramNumberChange(tempProgramPreset);
+}
+
+/**
+ * Handler for when the midi program preset value changes
+ * @param {byte} value
+ */
+void onMidiProgramPresetChange(byte value) {
+  tempProgramPreset = value;
+  updateMidiProgramDisplay("preset", tempProgramPresetNumber, tempProgramNumber, tempProgramPreset);
+}
+
+/**
+ * Stores the midi program preset code
+ */
+void onStoreMidiProgramPreset() {
+  storeValue(tempProgramPresetNumber, tempProgramNumber);
+  storeValue(NUM_PROGRAM_PRESETS + tempProgramPresetNumber, tempProgramPreset);
+}
+
+////////////////////////////
+////  MIDI CC HANDLERS  ////
+////////////////////////////
+
+/**
+ * Handler for when switching to the midi cc output state
+ */
+void onMidiCCOutputState() {
+  resetRotaryValue(0);
+  onMidiCCOutputChange(0);
+}
+
+/**
+ * Handler for when the midi cc output value changes
+ * @param {byte} value
+ */
+void onMidiCCOutputChange(byte value) {
+  tempOutputNumber = value;
+  tempCCNumber = getValueFromStorage(MIDI_CC_STORAGE_LOCATIONS[tempOutputNumber]);
+  updateMidiCCDisplay("output", tempOutputNumber, tempCCNumber);
+}
+
+/**
+ * Handler for when switching to the midi cc number state
+ */
+void onMidiCCNumberState() {
+  resetRotaryValue(tempCCNumber);
+  onMidiCCChange(tempCCNumber);
+}
+
+/**
+ * Handler for when the midi cc value changes
+ * @param {byte} value
+ */
+void onMidiCCChange(byte value) {
+  tempCCNumber = value;
+  updateMidiCCDisplay("ctl", tempOutputNumber, tempCCNumber);
+}
+
+/**
+ * Stores the midi cc code
+ */
+void onStoreMidiCC() {
+  storeValue(MIDI_CC_STORAGE_LOCATIONS[tempOutputNumber], tempCCNumber);
+}
+
+////////////////////////////
+////  INPUT COLLECTORS  ////
+////////////////////////////
 
 /**
  * Control change handler
@@ -175,45 +487,330 @@ void onProgramChange(byte channel, byte number) {
 }
 
 /**
- * Rotary change handler
+ * Rotary pin A change handler
+ */
+void onRotaryUpdatePinA() {
+  cli();
+  pinReading = PIND & 0xC;
+
+  if(pinReading == B00001100 && rotaryPinAFlag) {
+    newRotaryValue--;
+    rotaryPinBFlag = 0;
+    rotaryPinAFlag = 0;
+  } else if(pinReading == B00000100) {
+    rotaryPinBFlag = 1;
+  }
+
+  sei();
+}
+
+/**
+ * Rotary pin B change handler
+ */
+void onRotaryUpdatePinB() {
+  cli();
+  pinReading = PIND & 0xC;
+
+  if(pinReading == B00001100 && rotaryPinBFlag) {
+    newRotaryValue++;
+    rotaryPinBFlag = 0;
+    rotaryPinAFlag = 0;
+  } else if(pinReading == B00001000) {
+    rotaryPinAFlag = 1;
+  }
+
+  sei();
+}
+
+/**
+ * Rotary value handler
  */
 void onRotaryUpdate() {
-  byte state = 0;
-
-  state += digitalRead(rotaryPinA);
-  state <<= 1;
-  state += digitalRead(rotaryPinB);
-
-  rotaryValue += rotaryBump[state];
-
-  if(rotaryValue == maxRotaryValue) {
-    rotaryValue = loop ? 0 : maxRotaryValue - 1;
+  // no rotation means no continue
+  if(prevRotaryValue == newRotaryValue) {
+    return;
   }
 
-  if(rotaryValue < minRotaryValue) {
-    rotaryValue = loop ? maxRotaryValue - 1 : 0;
+  prevRotaryValue = newRotaryValue;
+
+  // when hitting the maximum value either stop
+  // or continue from the minimum value
+  if(newRotaryValue >= maxRotaryValue) {
+    newRotaryValue = loopRotaryValue ? minRotaryValue : maxRotaryValue - 1;
   }
 
-  Serial.println(rotaryValue);
+  // when hitting the minimum value either stop
+  // or continue from the maximum value
+  if(newRotaryValue <= minRotaryValue - 1) {
+    newRotaryValue = loopRotaryValue ? maxRotaryValue - 1 : minRotaryValue;
+  }
+
+  // no value change, no need for updating
+  if(newRotaryValue == rotaryValue) {
+    return;
+  }
+
+  rotaryValue = newRotaryValue;
+
+  switch(state) {
+    case STATE_NAV:
+      onNavigationChange(rotaryValue);
+      break;
+
+    case STATE_SELECT_MIDI_CHANNEL:
+      onMidiChannelChange(rotaryValue);
+      break;
+
+    case STATE_SELECT_MIDI_PROGRAM_PRESET_NUMBER:
+      onMidiProgramPresetNumberChange(rotaryValue);
+      break;
+
+    case STATE_SELECT_MIDI_PROGRAM_NUMBER:
+      onMidiProgramNumberChange(rotaryValue);
+      break;
+
+    case STATE_SELECT_MIDI_PROGRAM_PRESET:
+      onMidiProgramPresetChange(rotaryValue);
+      break;
+
+    case STATE_SELECT_MIDI_CONTROL_CHANGE_OUTPUT:
+      onMidiCCOutputChange(rotaryValue);
+      break;
+
+    case STATE_SELECT_MIDI_CONTROL_CHANGE_NUMBER:
+      onMidiCCChange(rotaryValue);
+      break;
+  }
 }
 
 /**
  * Select button press handler
  */
 void onSelectButtonPress() {
-  Serial.println("Select button pressed!");
+  switch(state) {
+    case STATE_INIT:
+      changeState(STATE_NAV);
+      break;
+
+    case STATE_NAV:
+      changeState(NAVIGATION_ITEMS_TO_STATE[rotaryValue]);
+      break;
+
+    case STATE_SELECT_MIDI_PROGRAM_PRESET_NUMBER:
+      changeState(STATE_SELECT_MIDI_PROGRAM_NUMBER);
+      break;
+
+    case STATE_SELECT_MIDI_PROGRAM_NUMBER:
+      changeState(STATE_SELECT_MIDI_PROGRAM_PRESET);
+      break;
+
+    case STATE_SELECT_MIDI_CONTROL_CHANGE_OUTPUT:
+      changeState(STATE_SELECT_MIDI_CONTROL_CHANGE_NUMBER);
+      break;
+  }
 }
 
 /**
  * Store button press handler
  */
 void onStoreButtonPress() {
-  Serial.println("Store button pressed!");
+  switch(state) {
+    case STATE_SELECT_MIDI_CHANNEL:
+      onStoreMidiChannel();
+      changeState(STATE_NAV);
+      break;
+
+    case STATE_SELECT_MIDI_PROGRAM_PRESET:
+      onStoreMidiProgramPreset();
+      changeState(STATE_NAV);
+      break;
+
+    case STATE_SELECT_MIDI_CONTROL_CHANGE_NUMBER:
+      onStoreMidiCC();
+      changeState(STATE_NAV);
+      break;
+
+    case STATE_MEMORY_RESET:
+      onStoreMemoryReset();
+      changeState(STATE_NAV);
+      break;
+  }
+
+  resetTempValues();
 }
 
 /**
  * Exit button press handler
  */
 void onExitButtonPress() {
-  Serial.println("Exit button pressed!");
+  byte tempState;
+  
+  if(state != STATE_INIT) {
+    tempState = STATE_NAV;
+
+    if(state == STATE_NAV) {
+      tempState = STATE_INIT;
+    }
+
+    resetTempValues();
+    resetRotaryValue();
+    changeState(tempState);
+  }
+}
+
+/**
+ * Changes the state of the application
+ * @param {int} newState
+ */
+void changeState(int newState) {
+  if(state == newState) {
+    return;
+  }
+  
+  state = newState;
+
+  switch(newState) {
+    case STATE_INIT:
+      onInitState();
+      break;
+
+    case STATE_NAV:
+      minRotaryValue = 0;
+      maxRotaryValue = NUM_NAVIGATION_ITEMS;
+      loopRotaryValue = false;
+      onNavigationState();
+      resetRotaryValue(minRotaryValue);
+      break;
+
+    case STATE_SELECT_MIDI_CHANNEL:
+      minRotaryValue = 0;
+      maxRotaryValue = NUM_MIDI_CHANNELS;
+      loopRotaryValue = true;
+      onMidiChannelState();
+      break;
+
+    case STATE_SELECT_MIDI_PROGRAM_PRESET_NUMBER:
+      minRotaryValue = 0;
+      maxRotaryValue = NUM_PROGRAM_PRESETS;
+      loopRotaryValue = true;
+      onMidiProgramPresetNumberState();
+      break;
+
+    case STATE_SELECT_MIDI_PROGRAM_NUMBER:
+      minRotaryValue = 0;
+      maxRotaryValue = NUM_PROGRAM_NUMBERS;
+      loopRotaryValue = true;
+      onMidiProgramNumberState();
+      break;
+
+    case STATE_SELECT_MIDI_PROGRAM_PRESET:
+      minRotaryValue = 0;
+      maxRotaryValue = NUM_PROGRAM_PRESETS;
+      loopRotaryValue = true;
+      onMidiProgramPresetState();
+      break;
+
+    case STATE_SELECT_MIDI_CONTROL_CHANGE_OUTPUT:
+      minRotaryValue = 0;
+      maxRotaryValue = NUM_DEVICE_OUTPUTS;
+      loopRotaryValue = true;
+      onMidiCCOutputState();
+      break;
+
+    case STATE_SELECT_MIDI_CONTROL_CHANGE_NUMBER:
+      minRotaryValue = 0;
+      maxRotaryValue = NUM_CC_NUMBERS;
+      loopRotaryValue = true;
+      onMidiCCNumberState();
+      break;
+
+    case STATE_MEMORY_RESET:
+      onMemoryResetState();
+      break;
+
+    case STATE_SOFTWARE_VERSION:
+      onSoftwareVersionState();
+      break;
+  }
+}
+
+/**
+ * Setup
+ */
+void setup() {
+  lcd.setBacklight(HIGH);
+  lcd.begin(16, 2);
+  
+  pinMode(ROTARY_PIN_A, INPUT);
+  pinMode(ROTARY_PIN_B, INPUT);
+  digitalWrite(ROTARY_PIN_A, HIGH);
+  digitalWrite(ROTARY_PIN_B, HIGH);
+  attachInterrupt(0, onRotaryUpdatePinA, RISING);
+  attachInterrupt(1, onRotaryUpdatePinB, RISING);
+
+  digitalWrite(SELECT_BUTTON_PIN, HIGH);
+  selectButtonState = digitalRead(SELECT_BUTTON_PIN);
+  selectButtonLastState = selectButtonState;
+
+  digitalWrite(STORE_BUTTON_PIN, HIGH);
+  storeButtonState = digitalRead(STORE_BUTTON_PIN);
+  storeButtonLastState = storeButtonState;
+
+  digitalWrite(EXIT_BUTTON_PIN, HIGH);
+  exitButtonState = digitalRead(EXIT_BUTTON_PIN);
+  exitButtonLastState = exitButtonState;
+
+  pinMode(ACTIVITY_PIN, OUTPUT);
+  pinMode(OUTPUT_PIN_1, OUTPUT);
+  pinMode(OUTPUT_PIN_2, OUTPUT);
+  pinMode(OUTPUT_PIN_3, OUTPUT);
+  pinMode(OUTPUT_PIN_4, OUTPUT);
+
+  byte midiChannel = getValueFromStorage(MIDI_CHANNEL_STORAGE_LOCATION) || DEFAULT_MIDI_CHANNEL;
+  
+  MIDI.begin(midiChannel);
+  MIDI.setHandleControlChange(onControlChange);
+  MIDI.setHandleProgramChange(onProgramChange);
+
+  resetTempValues();
+  changeState(STATE_INIT);
+
+  Serial.begin(9600);
+}
+
+/**
+ * Loop
+ */
+void loop() {
+  selectButtonState = digitalRead(SELECT_BUTTON_PIN);
+  
+  if(selectButtonState == HIGH && selectButtonLastState == LOW) {
+   onSelectButtonPress();
+  }
+  delay(1);
+  
+  selectButtonLastState = selectButtonState;
+
+  // no need to check button and rotary states when in init mode
+  if(state == STATE_INIT) {
+    MIDI.read();
+  } else {
+    storeButtonState = digitalRead(STORE_BUTTON_PIN);
+    exitButtonState = digitalRead(EXIT_BUTTON_PIN);
+  
+    if(storeButtonState == LOW && storeButtonLastState == HIGH) {
+     onStoreButtonPress();
+    }
+    delay(1);
+  
+    if(exitButtonState == LOW && exitButtonLastState == HIGH) {
+     onExitButtonPress();
+    }
+    delay(1);
+  
+    storeButtonLastState = storeButtonState;
+    exitButtonLastState = exitButtonState;
+  
+    onRotaryUpdate();
+  }
 }
