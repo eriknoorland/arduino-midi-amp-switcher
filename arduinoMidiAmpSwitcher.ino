@@ -4,7 +4,7 @@
 #include "MIDI.h"
 
 // software version number (major.minor.hotfix)
-const String VERSION_NUMBER = "0.7.0";
+const String VERSION_NUMBER = "0.7.1";
 
 // default midi channel is used when the user
 // has not yet stored a midi channel
@@ -476,10 +476,10 @@ void onProgramChange(byte channel, byte number) {
   byte pin;
 
   for(byte i = 1; i < NUM_PROGRAM_PRESETS + 1; i++) {
-    program = getValueFromStorage(j);
+    program = getValueFromStorage(i);
 
     if(program == number) {
-      preset = getValueFromStorage(NUM_PROGRAM_PRESETS + j);
+      preset = getValueFromStorage(NUM_PROGRAM_PRESETS + i);
 
       for(byte j = 0; j < 4; j++) {
         pin = DEVICE_OUTPUT_PINS[j];
