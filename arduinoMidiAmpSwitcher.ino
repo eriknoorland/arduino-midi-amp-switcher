@@ -1,14 +1,14 @@
+#include "Adafruit_LiquidCrystal.h"
+#include "EEPROM.h"
 #include "Wire.h"
 #include "MIDI.h"
-#include "EEPROM.h"
-#include "Adafruit_LiquidCrystal.h"
 
 // software version number (major.minor.hotfix)
-const String VERSION_NUMBER = "0.4.0";
+const String VERSION_NUMBER = "0.7.0";
 
 // default midi channel is used when the user
 // has not yet stored a midi channel
-const byte DEFAULT_MIDI_CHANNEL = 1;
+const byte DEFAULT_MIDI_CHANNEL = 2;
 
 // input pins (rotary / buttons)
 const byte ROTARY_PIN_A = 2;
@@ -19,10 +19,10 @@ const byte EXIT_BUTTON_PIN = 12;
 
 // output pins
 const byte ACTIVITY_PIN = 13;
-const byte OUTPUT_PIN_1 = 9;
-const byte OUTPUT_PIN_2 = 10;
-const byte OUTPUT_PIN_3 = 11;
-const byte OUTPUT_PIN_4 = 12;
+const byte OUTPUT_PIN_1 = 6;
+const byte OUTPUT_PIN_2 = 7;
+const byte OUTPUT_PIN_3 = 8;
+const byte OUTPUT_PIN_4 = 9;
 
 // program states
 const byte STATE_INIT = 0;
@@ -54,28 +54,17 @@ const byte NAVIGATION_ITEMS_TO_STATE[NUM_NAVIGATION_ITEMS] = {
 };
 
 // navigation items
-const String NAVIGATION_ITEMS[NUM_NAVIGATION_ITEMS] = {
-  "CHANNEL",
-  "PROGRAM",
-  "CC",
-  "RESET MEMORY",
-  "VERSION"
-};
+const String NAVIGATION_ITEMS[NUM_NAVIGATION_ITEMS] = {"CHANNEL", "PROGRAM", "CC", "RESET MEMORY", "VERSION"};
 
-// program presets byte values
-const byte PROGRAM_PRESETS[NUM_PROGRAM_PRESETS] = {
-  B00000000, B00000001, B00000010, B00000011, B00000100, B00000101, B00000110, B00000111,
-  B00001000, B00001001, B00001010, B00001011, B00001100, B00001101, B00001110, B00001111
-};
-
-// program presets string values (for display purposes)
+// program presets
 const String PROGRAM_PRESET_STRINGS[NUM_PROGRAM_PRESETS] = {
-  "0000", "0001", "0010", "0011", "0100", "0101", "0110", "0111",
-  "1000", "1001", "1010", "1011", "1100", "1101", "1110", "1111"
+  "0000", "1000", "0100", "0010", "0001", "1001", "1010", "1011",
+  "1100", "1101", "1110", "1111", "0011", "0101", "0110", "0111"
 };
 
 // device outputs
 const byte DEVICE_OUTPUTS[NUM_DEVICE_OUTPUTS] = {1, 2, 3, 4};
+const byte DEVICE_OUTPUT_PINS[NUM_DEVICE_OUTPUTS] = {OUTPUT_PIN_1, OUTPUT_PIN_2, OUTPUT_PIN_3, OUTPUT_PIN_4};
 
 // storage locations
 const int MIDI_CHANNEL_STORAGE_LOCATION = 37;
@@ -137,7 +126,7 @@ void resetTempValues() {
   tempMidiChannel = 0;
   tempProgramPresetNumber = 0;
   tempProgramNumber = 0;
-  tempProgramPreset = PROGRAM_PRESETS[0];
+  tempProgramPreset = 0;
   tempOutputNumber = 0;
   tempCCNumber = 0;
 }
@@ -146,13 +135,12 @@ void resetTempValues() {
  * Flashes the activity LED
  */
 void onMidiActivity() {
-  // FIX ME: make this function non-blocking
   digitalWrite(ACTIVITY_PIN, HIGH);
-  delay(50);
+  delay(40);
   digitalWrite(ACTIVITY_PIN, LOW);
-  delay(50);
+  delay(40);
   digitalWrite(ACTIVITY_PIN, HIGH);
-  delay(50);
+  delay(40);
   digitalWrite(ACTIVITY_PIN, LOW);
 }
 
@@ -450,9 +438,9 @@ void onStoreMidiCC() {
   storeValue(MIDI_CC_STORAGE_LOCATIONS[tempOutputNumber], tempCCNumber);
 }
 
-////////////////////////////
-////  INPUT COLLECTORS  ////
-////////////////////////////
+///////////////////////////////
+////  MIDI INPUT HANDLERS  ////
+///////////////////////////////
 
 /**
  * Control change handler
@@ -461,11 +449,17 @@ void onStoreMidiCC() {
  * @param {byte} value
  */
 void onControlChange(byte channel, byte number, byte value) {
-  Serial.println("cc number -> " + String(number));
+  byte cc;
+  byte pin;
 
-  // if this number is stored by the user
-  // get the output number (1-4)
-  // set the output to either HIGH or LOW based on the value
+  for(byte i = 0; i < NUM_DEVICE_OUTPUTS; i++) {
+    cc = getValueFromStorage(MIDI_CC_STORAGE_LOCATIONS[i]);
+    pin = DEVICE_OUTPUT_PINS[i];
+
+    if(cc == number) {
+      digitalWrite(pin, (value ? HIGH : LOW));
+    }
+  }
 
   onMidiActivity();
 }
@@ -476,15 +470,31 @@ void onControlChange(byte channel, byte number, byte value) {
  * @param {byte} number
  */
 void onProgramChange(byte channel, byte number) {
-  Serial.println("program number -> " + String(number));
+  String preset;
+  byte program;
+  byte pinValue;
+  byte pin;
 
-  // if this number is store by the user
-  // the stored value will look something like 23_5 <program number>_<programPresets index>
-  // get the corresponding preset (---- means it's turned off)
-  // loop through the preset and set the outputs accordingly
+  for(byte i = 1; i < NUM_PROGRAM_PRESETS + 1; i++) {
+    program = getValueFromStorage(j);
+
+    if(program == number) {
+      preset = getValueFromStorage(NUM_PROGRAM_PRESETS + j);
+
+      for(byte j = 0; j < 4; j++) {
+        pin = DEVICE_OUTPUT_PINS[j];
+        pinValue = (String(preset[j]) == "1" ? HIGH : LOW);
+        digitalWrite(pin, pinValue);
+      }
+    }
+  }
 
   onMidiActivity();
 }
+
+////////////////////////////
+////  INPUT COLLECTORS  ////
+////////////////////////////
 
 /**
  * Rotary pin A change handler
@@ -683,8 +693,8 @@ void changeState(int newState) {
       break;
 
     case STATE_SELECT_MIDI_CHANNEL:
-      minRotaryValue = 0;
-      maxRotaryValue = NUM_MIDI_CHANNELS;
+      minRotaryValue = 1;
+      maxRotaryValue = NUM_MIDI_CHANNELS + 1;
       loopRotaryValue = true;
       onMidiChannelState();
       break;
@@ -697,8 +707,8 @@ void changeState(int newState) {
       break;
 
     case STATE_SELECT_MIDI_PROGRAM_NUMBER:
-      minRotaryValue = 0;
-      maxRotaryValue = NUM_PROGRAM_NUMBERS;
+      minRotaryValue = 1;
+      maxRotaryValue = NUM_PROGRAM_NUMBERS + 1;
       loopRotaryValue = true;
       onMidiProgramNumberState();
       break;
@@ -718,8 +728,8 @@ void changeState(int newState) {
       break;
 
     case STATE_SELECT_MIDI_CONTROL_CHANGE_NUMBER:
-      minRotaryValue = 0;
-      maxRotaryValue = NUM_CC_NUMBERS;
+      minRotaryValue = 1;
+      maxRotaryValue = NUM_CC_NUMBERS + 1;
       loopRotaryValue = true;
       onMidiCCNumberState();
       break;
@@ -766,7 +776,11 @@ void setup() {
   pinMode(OUTPUT_PIN_3, OUTPUT);
   pinMode(OUTPUT_PIN_4, OUTPUT);
 
-  byte midiChannel = getValueFromStorage(MIDI_CHANNEL_STORAGE_LOCATION) || DEFAULT_MIDI_CHANNEL;
+  byte midiChannel = getValueFromStorage(MIDI_CHANNEL_STORAGE_LOCATION);
+
+  if(midiChannel == 0) {
+    midiChannel = DEFAULT_MIDI_CHANNEL;
+  }
   
   MIDI.begin(midiChannel);
   MIDI.setHandleControlChange(onControlChange);
@@ -774,14 +788,14 @@ void setup() {
 
   resetTempValues();
   changeState(STATE_INIT);
-
-  Serial.begin(9600);
 }
 
 /**
  * Loop
  */
 void loop() {
+  MIDI.read();
+  
   selectButtonState = digitalRead(SELECT_BUTTON_PIN);
   
   if(selectButtonState == HIGH && selectButtonLastState == LOW) {
@@ -792,9 +806,7 @@ void loop() {
   selectButtonLastState = selectButtonState;
 
   // no need to check button and rotary states when in init mode
-  if(state == STATE_INIT) {
-    MIDI.read();
-  } else {
+  if(state != STATE_INIT) {
     storeButtonState = digitalRead(STORE_BUTTON_PIN);
     exitButtonState = digitalRead(EXIT_BUTTON_PIN);
   
