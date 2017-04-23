@@ -2,11 +2,12 @@
 #include "State.h"
 #include "Navigation.h"
 #include "Init.h"
+// #include "Display.h"
 
-void Navigation::onExit() {
-  _context->setState(new Init(_context));
+void Navigation::init() {
+  // Display::getInstance()->update("CHANNEL <", "PROGRAM", true);
 }
 
-void Navigation::onScroll(int value) {}
-void Navigation::onSelect() {}
-void Navigation::onStore() {}
+void Navigation::onExit() {
+  _context->setState(new Init(this->_context));
+}

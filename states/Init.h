@@ -3,12 +3,7 @@
 
 class Init: public State {
   public:
-    Init(CustomAmpSwitcher* context) : State(context) {}
-
-    void onScroll(int value);
-    void onSelect();
-    void onStore();
-    void onExit();
+    Init(CustomAmpSwitcher* context): State(context) {}
 };
 
 #endif

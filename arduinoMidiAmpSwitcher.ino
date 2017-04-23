@@ -1,9 +1,12 @@
 #include "CustomAmpSwitcher.h"
 
-CustomAmpSwitcher* switcher = new CustomAmpSwitcher();
+CustomAmpSwitcher* switcher;
 
 void setup() {
-  switcher->setup();
+  Serial.begin(9600);
+  Serial.println("setup");
+  
+  switcher = new CustomAmpSwitcher();
 }
 
 void loop() {

@@ -14,22 +14,15 @@ class State {
   public:
     State(CustomAmpSwitcher* context);
     
-    bool getLoopRotaryValue() {
-      return loopRotaryValue;
-    }
+    bool getLoopRotaryValue();
+    int getMinRotaryValue();
+    int getMaxRotaryValue();
 
-    int getMinRotaryValue() {
-      return minRotaryValue;
-    }
-    
-    int getMaxRotaryValue() {
-      return maxRotaryValue;
-    }
-
-    virtual void onScroll(int value) = 0;
-    virtual void onSelect() = 0;
-    virtual void onStore() = 0;
-    virtual void onExit() = 0;
+    virtual void init() {};
+    virtual void onScroll(int value) {};
+    virtual void onSelect() {};
+    virtual void onStore() {};
+    virtual void onExit() {};
 };
 
 #endif
