@@ -1,6 +1,10 @@
 #include "MIDI.h"
 
 #define MIDI_CHANNEL 2
+
+#define NUM_PROGRAM_PRESETS 16
+#define NUM_DEVICE_OUTPUTS 4
+
 #define ACTIVITY_PIN 13
 #define OUTPUT_PIN_1 6
 #define OUTPUT_PIN_2 7
@@ -14,12 +18,12 @@ const String PROGRAM_PRESET_STRINGS[NUM_PROGRAM_PRESETS] = {
 };
 
 // device outputs
-// const byte DEVICE_OUTPUTS[NUM_DEVICE_OUTPUTS] = {1, 2, 3, 4};
-// const byte DEVICE_OUTPUT_PINS[NUM_DEVICE_OUTPUTS] = {OUTPUT_PIN_1, OUTPUT_PIN_2, OUTPUT_PIN_3, OUTPUT_PIN_4};
-
-// storage locations
-// const int MIDI_CHANNEL_STORAGE_LOCATION = 37;
-// const int MIDI_CC_STORAGE_LOCATIONS[NUM_DEVICE_OUTPUTS] = {33, 34, 35, 36};
+const byte DEVICE_OUTPUT_PINS[NUM_DEVICE_OUTPUTS] = {
+  OUTPUT_PIN_1,
+  OUTPUT_PIN_2,
+  OUTPUT_PIN_3,
+  OUTPUT_PIN_4
+};
 
 MIDI_CREATE_DEFAULT_INSTANCE();
 
@@ -37,53 +41,16 @@ void onMidiActivity() {
 }
 
 /**
- * Control change handler
- * @param {byte} channel
- * @param {byte} number
- * @param {byte} value
- */
-void onControlChange(byte channel, byte number, byte value) {
-  if (channel == MIDI_CHANNEL) {
-    byte cc;
-    byte pin;
-
-    for(byte i = 0; i < NUM_DEVICE_OUTPUTS; i++) {
-      cc = getValueFromStorage(MIDI_CC_STORAGE_LOCATIONS[i]);
-      pin = DEVICE_OUTPUT_PINS[i];
-
-      if(cc == number) {
-        digitalWrite(pin, (value ? HIGH : LOW));
-      }
-    }
-
-    onMidiActivity();
-  }
-}
-
-/**
  * Program change handler
  * @param {byte} channel
  * @param {byte} number
  */
 void onProgramChange(byte channel, byte number) {
   if (channel == MIDI_CHANNEL) {
-    String preset;
-    byte program;
-    byte pinValue;
-    byte pin;
+    String preset = PROGRAM_PRESET_STRINGS[number - 1];
 
-    for(byte i = 1; i < NUM_PROGRAM_PRESETS + 1; i++) {
-      program = getValueFromStorage(i);
-
-      if(program == number) {
-        preset = getValueFromStorage(NUM_PROGRAM_PRESETS + i);
-
-        for(byte j = 0; j < 4; j++) {
-          pin = DEVICE_OUTPUT_PINS[j];
-          pinValue = (String(preset[j]) == "1" ? HIGH : LOW);
-          digitalWrite(pin, pinValue);
-        }
-      }
+    for (byte i = 0; i < 4; i++) {
+      digitalWrite(DEVICE_OUTPUT_PINS[i], (String(preset[i]) == "1" ? HIGH : LOW));
     }
 
     onMidiActivity();
@@ -99,14 +66,13 @@ void setup() {
   pinMode(OUTPUT_PIN_2, OUTPUT);
   pinMode(OUTPUT_PIN_3, OUTPUT);
   pinMode(OUTPUT_PIN_4, OUTPUT);
-  
+
   digitalWrite(OUTPUT_PIN_1, HIGH);
   digitalWrite(OUTPUT_PIN_2, HIGH);
   digitalWrite(OUTPUT_PIN_3, HIGH);
   digitalWrite(OUTPUT_PIN_4, HIGH);
-  
+
   MIDI.begin(MIDI_CHANNEL);
-  MIDI.setHandleControlChange(onControlChange);
   MIDI.setHandleProgramChange(onProgramChange);
 }
 
