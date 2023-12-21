@@ -43,14 +43,14 @@ void onMidiActivity() {
 /**
  * Program change handler
  * @param {byte} channel
- * @param {byte} number
+ * @param {byte} program
  */
-void onProgramChange(byte channel, byte number) {
+void onProgramChange(byte channel, byte program) {
   if (channel == MIDI_CHANNEL) {
-    String preset = PROGRAM_PRESET_STRINGS[number - 1];
+    String preset = PROGRAM_PRESET_STRINGS[program];
 
     for (byte i = 0; i < 4; i++) {
-      digitalWrite(DEVICE_OUTPUT_PINS[i], (String(preset[i]) == "1" ? HIGH : LOW));
+      digitalWrite(DEVICE_OUTPUT_PINS[i], (String(preset[i]) == "1" ? LOW : HIGH));
     }
 
     onMidiActivity();
